@@ -1,0 +1,83 @@
+# Maven
+# Build your Java project and run tests with Apache Maven.
+# Add steps that analyze code, save build artifacts, deploy, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/languages/java
+
+trigger:
+- master
+
+pool:
+  name: Default
+  vmImage: ubuntu-latest
+
+variables:
+  azureSubscriptionEndpoint: Azure subscription (your subscription)
+  DockerNamespace: docker.io
+  DockerRepository: maldini12/azure-docker-devops:$(Build.BuildId)
+  WebAppName: spring-devops-azure
+  tag: $(Build.BuildId)
+
+stages:
+- stage: Install_Jdk17
+  displayName: Install JDK 17
+  jobs:
+  - job: InstallJob
+    steps:
+    - task: JavaToolInstaller@0
+      inputs:
+        versionSpec: '17'
+        jdkArchitectureOption: 'x64'
+        jdkSourceOption: 'LocalDirectory'
+        jdkFile: '$(agent.toolsDirectory)/jdk-17_linux-x64_bin.tar.gz'
+        jdkDestinationDirectory: '$(agent.toolsDirectory)/jdk17'
+        cleanDestinationDirectory: true
+
+- stage: Build_App
+  displayName: Build Application
+  jobs:
+  - deployment: DevDeployJob
+    environment: Dev
+  - job: BuildProject
+    steps:
+    - task: Maven@3
+      inputs:
+        mavenPomFile: 'pom.xml'
+        mavenOptions: '-Xmx3072m'
+        publishJUnitResults: true
+        testResultsFiles: '**/surefire-reports/TEST-*.xml'
+        goals: 'clean install'
+
+- stage: Docker_Image
+  displayName: Build Docker image
+  jobs:
+  - deployment: DevContainerizationJob
+    environment: Dev
+  - job: Build
+    displayName: Build
+    steps:
+    - task: Docker@2
+      inputs:
+        containerRegistry: 'maldini-docker-hub'
+        repository: 'maldini12/azure-docker-devops'
+        command: 'buildAndPush'
+        Dockerfile: '**/Dockerfile'
+        tags: '$(tag)'
+
+- stage: Deploy_App
+  displayName: Deploy as WebApp 
+  jobs:
+  - deployment: QADeployJob
+    environment: QA
+  - job: Build  
+    steps:
+    - task: AzureRMWebAppDeployment@4
+      displayName: Azure App Service Deploy
+      inputs:
+        appType: webAppContainer
+        ConnectedServiceName: $(azureSubscriptionEndpoint)
+        WebAppName: $(WebAppName)
+        DockerNamespace: $(DockerNamespace)
+        DockerRepository: $(DockerRepository)
+        # DockerImageTag: $(Build.BuildId)
+
+    
